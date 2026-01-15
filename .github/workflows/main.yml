@@ -1,36 +1,51 @@
 name: Docker + ngrok Preview
+
 on:
   push:
-    branches: [ main, master ]
+    branches: [ "main" ]
+  workflow_dispatch:
 
 jobs:
-  deploy-preview:
+  preview:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Build Docker image
-      run: docker build -t flask-app .
+      - name: Build Docker image
+        run: docker build -t flask-preview .
 
-    - name: Run Flask app with ngrok
-      run: |
-        sudo apt update
-        sudo apt install -y curl
-        curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-        echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-        sudo apt update && sudo apt install -y ngrok
+      - name: Run container
+        run: docker run -d -p 5000:5000 --name flask_app flask-preview
 
-        ngrok config add-authtoken ${{ secrets.NGROK_AUTHTOKEN }}
+      - name: Install jq + ngrok
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" \
+            | sudo tee /etc/apt/sources.list.d/ngrok.list
+          sudo apt-get update
+          sudo apt-get install -y ngrok
 
-        docker run -d -p 5000:5000 --name flask-container flask-app
-        sleep 5
+      - name: Configure ngrok token
+        run: ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
 
-        ngrok http 5000 --log=stdout &
-        sleep 10
+      - name: Start ngrok and capture public URL
+        run: |
+          ngrok http 5000 > /dev/null &
+          sleep 10
+          curl -s http://127.0.0.1:4040/api/tunnels \
+            | jq -r '.tunnels[0].public_url' > preview_url.txt
+          cat preview_url.txt
 
-        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o '"public_url":"[^"]*https[^"]*' | cut -d'"' -f4)
-        echo "🌐 URL publique : $NGROK_URL"
+      - name: Upload URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flask-preview-url
+          path: preview_url.txt
 
-        sleep 120
+      - name: Keep preview alive 300s
+        run: sleep 300
